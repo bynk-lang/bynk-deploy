@@ -1,7 +1,7 @@
 name: Bynk Deploy
 description: >-
   Compile a Bynk project and deploy the generated Cloudflare Worker(s) with
-  wrangler. Each Bynk context becomes one Worker.
+  wrangler.
 author: bynk-lang
 
 branding:
