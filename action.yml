@@ -1,0 +1,120 @@
+name: Bynk Deploy
+description: >-
+  Compile a Bynk project and deploy the generated Cloudflare Worker(s) with
+  wrangler. Each Bynk context becomes one Worker.
+author: bynk-lang
+
+branding:
+  icon: upload-cloud
+  color: purple
+
+inputs:
+  version:
+    description: Bynk version to install (passed to setup-bynk).
+    required: false
+    default: latest
+  repository:
+    description: The owner/name repo that publishes Bynk releases.
+    required: false
+    default: accuser/bynk
+  working-directory:
+    description: Project root to build from.
+    required: false
+    default: "."
+  source:
+    description: Source path passed to `bynkc compile`.
+    required: false
+    default: src
+  output:
+    description: Build output directory (Workers are emitted under <output>/workers/).
+    required: false
+    default: .bynk/build
+  workers:
+    description: >-
+      Optional space-separated list of worker names to deploy. Empty deploys
+      every emitted worker.
+    required: false
+    default: ""
+  environment:
+    description: Optional wrangler environment (passed as `--env`).
+    required: false
+    default: ""
+  dry-run:
+    description: Run `wrangler deploy --dry-run` instead of deploying.
+    required: false
+    default: "false"
+  node-version:
+    description: Node.js version to set up for wrangler.
+    required: false
+    default: "20"
+  wrangler-version:
+    description: wrangler version to run via npx (e.g. "3" or "latest").
+    required: false
+    default: latest
+  cloudflare-api-token:
+    description: Cloudflare API token (set as CLOUDFLARE_API_TOKEN for wrangler).
+    required: true
+  cloudflare-account-id:
+    description: Cloudflare account ID (set as CLOUDFLARE_ACCOUNT_ID).
+    required: false
+    default: ""
+  github-token:
+    description: Token for setup-bynk's API calls.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Bynk
+      uses: bynk-lang/setup-bynk@v1
+      with:
+        version: ${{ inputs.version }}
+        repository: ${{ inputs.repository }}
+        github-token: ${{ inputs.github-token }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4 # pin to a release SHA before publishing
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Compile
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: bynkc compile ${{ inputs.source }} --output ${{ inputs.output }}
+
+    - name: Deploy worker(s)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        OUTPUT: ${{ inputs.output }}
+        WORKERS: ${{ inputs.workers }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+      run: |
+        set -euo pipefail
+        workers_dir="${OUTPUT}/workers"
+        [ -d "$workers_dir" ] || { echo "::error::no workers emitted under ${workers_dir}"; exit 1; }
+
+        args=(deploy)
+        [ -n "${ENVIRONMENT}" ] && args+=(--env "${ENVIRONMENT}")
+        [ "${DRY_RUN}" = "true" ] && args+=(--dry-run)
+
+        deployed=0
+        for dir in "$workers_dir"/*/; do
+          name="$(basename "$dir")"
+          [ -f "${dir}wrangler.toml" ] || continue
+          if [ -n "${WORKERS}" ] && ! grep -qw "$name" <<<"${WORKERS}"; then
+            echo "Skipping ${name} (not in workers filter)"
+            continue
+          fi
+          echo "::group::Deploying ${name}"
+          ( cd "$dir" && npx --yes "wrangler@${WRANGLER_VERSION}" "${args[@]}" )
+          echo "::endgroup::"
+          deployed=$((deployed + 1))
+        done
+        [ "$deployed" -gt 0 ] || { echo "::error::no workers matched"; exit 1; }
+        echo "Deployed ${deployed} worker(s)"
