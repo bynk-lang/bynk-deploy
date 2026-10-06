@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: bynk-lang/bynk-deploy@v2
         with:
-          version: 0.303.4
+          version: 0.307.0
           cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 ```
@@ -49,7 +49,7 @@ so it needs no token:
 - uses: bynk-lang/bynk-deploy@v2
   id: plan
   with:
-    version: 0.303.4
+    version: 0.307.0
     dry-run: "true"
     plan-format: text
 - env:
@@ -62,7 +62,7 @@ Deploy to a named environment:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.303.4
+    version: 0.307.0
     environment: staging
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
@@ -72,7 +72,7 @@ Re-push one context in a topology that is already live:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.303.4
+    version: 0.307.0
     context: commerce.orders
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
@@ -90,7 +90,7 @@ lines in `secrets`:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.303.4
+    version: 0.307.0
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     secrets: |
