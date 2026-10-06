@@ -1,0 +1,175 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every run is a dry run: `bynk deploy --dry-run` never authenticates, so no
+# Cloudflare credentials are needed. The assertions read the JSON plan.
+env:
+  BYNK_VERSION: 0.303.4
+
+jobs:
+  single:
+    name: One context (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Dry run
+        id: deploy
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          secrets: |
+            # A supplied name, on top of the declared and read ones.
+            STRIPE_KEY="sk_test_fixture"
+
+      - name: Assert on the plan
+        shell: bash
+        env:
+          PLAN: ${{ steps.deploy.outputs.plan }}
+          CONTEXTS: ${{ steps.deploy.outputs.contexts }}
+          LOCK_CHANGED: ${{ steps.deploy.outputs.lock-changed }}
+        run: |
+          set -euo pipefail
+          check() { echo "$PLAN" | jq -e "$1" >/dev/null || { echo "::error::plan check failed: $1"; echo "$PLAN"; exit 1; }; }
+          check '.order == ["notes"]'
+          check '.contexts[0].migration == {"tag": "v1", "applied_by": "wrangler deploy"}'
+          check '.contexts[0].secrets | map(select(.name == "AUTH_JWT_SECRET"))[0].origin == "declared"'
+          check '.contexts[0].secrets | map(select(.name == "GREETING"))[0].origin == "read"'
+          check '.contexts[0].secrets | map(select(.name == "STRIPE_KEY"))[0].origin == "supplied"'
+          check '.contexts[0].secrets_complete == true'
+          check '.contexts[0].action == "deploy"'
+          [ "$CONTEXTS" = "notes" ] || { echo "::error::contexts output was '$CONTEXTS'"; exit 1; }
+          [ "$LOCK_CHANGED" = "false" ] || { echo "::error::lock-changed was '$LOCK_CHANGED'"; exit 1; }
+
+      - name: Assert the dry run left nothing behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e test/fixtures/single/bynk.deploy.lock ]; then
+            echo "::error::a dry run wrote bynk.deploy.lock"; exit 1
+          fi
+          if ls "$RUNNER_TEMP"/bynk-secrets.* >/dev/null 2>&1; then
+            echo "::error::the secrets file was not removed"; exit 1
+          fi
+          git diff --exit-code -- test/fixtures
+
+      - name: Dry run, text plan
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          plan-format: text
+
+  pair:
+    name: Two contexts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Dry run
+        id: deploy
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/pair
+          dry-run: "true"
+
+      - name: Assert on the plan
+        shell: bash
+        env:
+          PLAN: ${{ steps.deploy.outputs.plan }}
+          CONTEXTS: ${{ steps.deploy.outputs.contexts }}
+        run: |
+          set -euo pipefail
+          check() { echo "$PLAN" | jq -e "$1" >/dev/null || { echo "::error::plan check failed: $1"; echo "$PLAN"; exit 1; }; }
+          # Payment first: orders binds to it. (Alphabetical order would be the reverse.)
+          check '.order == ["shop-payment", "shop-orders"]'
+          check '.contexts | map(.worker) == ["shop-payment", "shop-orders"]'
+          check '.contexts[1].binds_to == ["shop-payment"]'
+          check '.contexts[0].binds_to == []'
+          check '[.contexts[].migration] == [null, null]'
+          [ "$CONTEXTS" = "shop-payment shop-orders" ] || { echo "::error::contexts output was '$CONTEXTS'"; exit 1; }
+
+      - name: Dry run of one context whose dependency was never deployed
+        id: context
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/pair
+          context: shop.orders
+          dry-run: "true"
+
+      - name: Dry run with --env after --
+        id: env-conflict
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/pair
+          environment: staging
+          extra-args: --env production
+          dry-run: "true"
+
+      - name: Dry run outside a Bynk project
+        id: no-project
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures
+          dry-run: "true"
+
+      - name: Assert the refusals
+        shell: bash
+        env:
+          CONTEXT: ${{ steps.context.outcome }}
+          ENV_CONFLICT: ${{ steps.env-conflict.outcome }}
+          NO_PROJECT: ${{ steps.no-project.outcome }}
+        run: |
+          set -euo pipefail
+          [ "$CONTEXT" = "failure" ] || { echo "::error::--context with an undeployed dependency was not refused"; exit 1; }
+          [ "$ENV_CONFLICT" = "failure" ] || { echo "::error::--env after -- was not refused"; exit 1; }
+          [ "$NO_PROJECT" = "failure" ] || { echo "::error::a directory without bynk.toml was not refused"; exit 1; }
+
+      - name: Assert the dry runs left nothing behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e test/fixtures/pair/bynk.deploy.lock ]; then
+            echo "::error::a dry run wrote bynk.deploy.lock"; exit 1
+          fi
+          git diff --exit-code -- test/fixtures
+
+  fixtures:
+    name: Fixtures pass bynkc check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: bynk-lang/setup-bynk@v1
+        with:
+          version: ${{ env.BYNK_VERSION }}
+      - name: bynkc check
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in test/fixtures/*/; do
+            echo "::group::${dir}"
+            (cd "$dir" && bynkc check --format short .)
+            echo "::endgroup::"
+          done

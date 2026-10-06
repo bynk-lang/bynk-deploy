@@ -1,0 +1,37 @@
+context notes
+
+consumes bynk { Secrets }
+
+type UserId = String where NonEmpty
+
+-- A declared secret: `bynk deploy` reads the name out of the compiled actor.
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+-- One note per name (a Cloudflare Durable Object), so the plan carries a
+-- migration line.
+agent Note {
+	key name: String
+
+	store text: Cell[String]
+
+	on call write(value: String) -> Effect[String] {
+		text := value
+		value
+	}
+}
+
+service api from http {
+	on PUT("/notes/:name") (name: String, body: String) -> Effect[HttpResult[String]] by u: User {
+		let saved <- Note(name).write(body)
+		Ok(saved)
+	}
+
+	-- A read secret: a literal `Secrets.get` name.
+	on GET("/greeting") () -> Effect[HttpResult[String]] by Visitor given Secrets {
+		let greeting <- Secrets.get("GREETING")
+		match greeting {
+			None => Ok("hello"),
+			Some(g) => Ok(g),
+		}
+	}
+}

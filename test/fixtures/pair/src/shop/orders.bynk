@@ -1,0 +1,13 @@
+context shop.orders
+
+consumes shop.payment
+
+service api from http {
+	on POST("/orders") (body: Int) -> Effect[HttpResult[Int]] by Visitor {
+		let result <- shop.payment.authorise(body)
+		match result {
+			Ok(n) => Ok(n),
+			Err(_) => BadRequest("payment declined"),
+		}
+	}
+}
