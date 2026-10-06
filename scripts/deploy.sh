@@ -24,7 +24,9 @@ common_args() {
   fi
   if [ -n "${INPUT_EXTRA_ARGS:-}" ]; then
     local extra
-    read -ra extra <<<"${INPUT_EXTRA_ARGS}"
+    # Newlines become spaces first: `read` stops at the first one, which would
+    # silently drop every line of a `|` block after the first.
+    read -ra extra <<<"$(tr '\n' ' ' <<<"${INPUT_EXTRA_ARGS}")"
     if [ "${#extra[@]}" -gt 0 ]; then
       args+=(-- "${extra[@]}")
     fi
@@ -53,6 +55,15 @@ case "$phase" in
       echo "::error::no bynk.toml in \`${dir}\` — set working-directory to the Bynk project root"
       exit 1
     fi
+    for pair in "dry-run=${INPUT_DRY_RUN:-false}" "force-secrets=${INPUT_FORCE_SECRETS:-false}"; do
+      case "${pair#*=}" in
+        true | false) ;;
+        *)
+          echo "::error::${pair%%=*} must be \`true\` or \`false\`, not \`${pair#*=}\`"
+          exit 1
+          ;;
+      esac
+    done
     case "${INPUT_PLAN_FORMAT:-json}" in
       json | text) ;;
       *)
@@ -79,6 +90,9 @@ case "$phase" in
       value="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${line#*=}")"
       if [ -n "$value" ]; then
         echo "::add-mask::${value}"
+        if [ "${#value}" -lt 4 ]; then
+          echo "::warning::secret \`${line%%=*}\` has a value under 4 characters; masking it hides every occurrence of that text in the log"
+        fi
       fi
       if [ "${#value}" -ge 2 ]; then
         first="${value:0:1}" last="${value: -1}"
@@ -106,7 +120,7 @@ case "$phase" in
     common_args
     plan_file="$(mktemp "${RUNNER_TEMP:-/tmp}/bynk-plan.XXXXXX")"
     echo "::group::bynk deploy --dry-run"
-    trap 'echo "::endgroup::"' EXIT
+    trap 'rm -f "$plan_file"; echo "::endgroup::"' EXIT
     status=0
     bynk deploy --dry-run --format json ${args[@]+"${args[@]}"} >"$plan_file" || status=$?
     if [ "$status" -ne 0 ]; then
@@ -125,17 +139,17 @@ case "$phase" in
     # Node rather than jq: this action always installs Node, not always jq.
     contexts="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).order.join(" "))' "$plan_file")"
     echo "contexts=${contexts}" >>"$GITHUB_OUTPUT"
-    rm -f "$plan_file"
     ;;
 
   deploy)
     common_args
-    export CLOUDFLARE_API_TOKEN="${INPUT_CLOUDFLARE_API_TOKEN:-}"
+    # An input wins; otherwise keep whatever the caller set in `env:`.
+    export CLOUDFLARE_API_TOKEN="${INPUT_CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
     if [ -n "${INPUT_CLOUDFLARE_ACCOUNT_ID:-}" ]; then
       export CLOUDFLARE_ACCOUNT_ID="${INPUT_CLOUDFLARE_ACCOUNT_ID}"
     fi
     if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
-      echo "::error::cloudflare-api-token is required for a real deploy (only a dry run can go without it)"
+      echo "::error::a real deploy needs a Cloudflare token: set cloudflare-api-token, or CLOUDFLARE_API_TOKEN in env (only a dry run can go without it)"
       exit 1
     fi
     echo "::group::bynk deploy"

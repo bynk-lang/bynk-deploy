@@ -58,7 +58,8 @@ inputs:
   extra-args:
     description: >-
       Arguments forwarded to `wrangler deploy` after `--`, split on whitespace
-      (no shell quoting). `--env`/`--environment` here is rejected by the
+      (newlines count as whitespace; no shell quoting). `--env`/`--environment`
+      here is rejected by the
       driver; use the `environment` input.
     required: false
     default: ""
@@ -68,8 +69,9 @@ inputs:
     default: "22"
   cloudflare-api-token:
     description: >-
-      Cloudflare API token (set as CLOUDFLARE_API_TOKEN). Required for a real
-      deploy; a dry run never authenticates.
+      Cloudflare API token (set as CLOUDFLARE_API_TOKEN). A real deploy needs
+      this or CLOUDFLARE_API_TOKEN in the step's env; a dry run never
+      authenticates.
     required: false
     default: ""
   cloudflare-account-id:
@@ -87,8 +89,9 @@ outputs:
     value: ${{ steps.plan.outputs.plan }}
   contexts:
     description: >-
-      Space-separated worker names in deploy order. After a successful real
-      deploy, these are the contexts that were deployed.
+      Space-separated worker names in deploy order. The driver pushes every
+      one (each plan action is `deploy` or `redeploy`), so after a successful
+      real deploy these are the contexts that were deployed.
     value: ${{ steps.plan.outputs.contexts }}
   lock-changed:
     description: >-
@@ -104,6 +107,8 @@ runs:
       env:
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_PLAN_FORMAT: ${{ inputs.plan-format }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
       run: ${{ github.action_path }}/scripts/deploy.sh check
 
     - name: Install Bynk

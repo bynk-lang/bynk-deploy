@@ -126,6 +126,28 @@ jobs:
           extra-args: --env production
           dry-run: "true"
 
+      - name: Dry run with --env on the second line of extra-args
+        id: env-conflict-multiline
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/pair
+          environment: staging
+          extra-args: |
+            --keep-vars
+            --env production
+          dry-run: "true"
+
+      - name: A dry-run value other than true/false
+        id: bad-bool
+        continue-on-error: true
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/pair
+          dry-run: "True"
+
       - name: Dry run outside a Bynk project
         id: no-project
         continue-on-error: true
@@ -140,11 +162,16 @@ jobs:
         env:
           CONTEXT: ${{ steps.context.outcome }}
           ENV_CONFLICT: ${{ steps.env-conflict.outcome }}
+          ENV_CONFLICT_MULTILINE: ${{ steps.env-conflict-multiline.outcome }}
+          BAD_BOOL: ${{ steps.bad-bool.outcome }}
           NO_PROJECT: ${{ steps.no-project.outcome }}
         run: |
           set -euo pipefail
           [ "$CONTEXT" = "failure" ] || { echo "::error::--context with an undeployed dependency was not refused"; exit 1; }
           [ "$ENV_CONFLICT" = "failure" ] || { echo "::error::--env after -- was not refused"; exit 1; }
+          # Refused only if the second line of the block reaches the driver.
+          [ "$ENV_CONFLICT_MULTILINE" = "failure" ] || { echo "::error::multi-line extra-args lost its second line"; exit 1; }
+          [ "$BAD_BOOL" = "failure" ] || { echo "::error::dry-run: True was not refused"; exit 1; }
           [ "$NO_PROJECT" = "failure" ] || { echo "::error::a directory without bynk.toml was not refused"; exit 1; }
 
       - name: Assert the dry runs left nothing behind

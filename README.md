@@ -34,7 +34,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: bynk-lang/bynk-deploy@v2
         with:
           version: 0.303.4
@@ -105,8 +105,18 @@ The action:
 3. passes it as `--secrets-file`;
 4. deletes the file at the end of the run, even after a failure.
 
-The content is never echoed. Dotenv rules are the driver's: `#` comments, blank
-lines, an optional `export ` prefix, and one layer of matching quotes.
+The action itself never echoes the content. GitHub, though, prints each step's
+`with:` inputs and `env:` in the log header before any `::add-mask::` can run.
+Values that come straight from `${{ secrets.* }}` are already masked by GitHub,
+so they stay hidden. **A literal value, or one built from a secret (a substring,
+say), appears in the log.** Only pass values that come directly from
+`secrets.*`.
+
+Every value is still masked as well. A value shorter than 4 characters gets a
+warning, because masking it hides every occurrence of that text in the log.
+
+Dotenv rules are the driver's: `#` comments, blank lines, an optional `export `
+prefix, and one layer of matching quotes.
 
 The driver also reads a value from the environment for any name it already
 knows (a declared or read secret), so `env:` on the step works for those. It
@@ -157,13 +167,13 @@ by names that come from your source.
 | `working-directory` | `.` | Project root. Must contain `bynk.toml`. |
 | `context` | `""` | `--context`: deploy this one context, by dotted or worker name. Empty deploys every context in order. |
 | `environment` | `""` | `--env`. Empty is the driver's `default` environment. |
-| `dry-run` | `false` | `--dry-run`: print the plan, change nothing. |
+| `dry-run` | `false` | `--dry-run`: print the plan, change nothing. Must be `true` or `false`. |
 | `plan-format` | `json` | How a dry run prints the plan in the log: `text` (the driver's `short`) or `json`. The `plan` output is JSON either way. |
 | `secrets` | `""` | Dotenv `NAME=value` lines, passed as `--secrets-file`. See [Secrets](#secrets). |
-| `force-secrets` | `false` | `--force`: overwrite secrets that are already set. |
-| `extra-args` | `""` | Arguments for `wrangler deploy`, passed after `--`. Split on whitespace, with no shell quoting. The driver rejects `--env` or `--environment` here; use `environment`. |
+| `force-secrets` | `false` | `--force`: overwrite secrets that are already set. Must be `true` or `false`. |
+| `extra-args` | `""` | Arguments for `wrangler deploy`, passed after `--`. Split on whitespace (newlines included, so a `|` block works), with no shell quoting. The driver rejects `--env` or `--environment` here; use `environment`. |
 | `node-version` | `22` | Node.js for Wrangler. The driver requires 22 or later. |
-| `cloudflare-api-token` | `""` | Cloudflare API token, set as `CLOUDFLARE_API_TOKEN`. Required unless `dry-run` is true. |
+| `cloudflare-api-token` | `""` | Cloudflare API token, set as `CLOUDFLARE_API_TOKEN`. A real deploy needs this or `CLOUDFLARE_API_TOKEN` in the step's `env:`; the input wins if both are set. A dry run needs neither. |
 | `cloudflare-account-id` | `""` | Cloudflare account ID, set as `CLOUDFLARE_ACCOUNT_ID`. |
 | `github-token` | `${{ github.token }}` | Token for setup-bynk. |
 
@@ -172,7 +182,7 @@ by names that come from your source.
 | Output | Description |
 | --- | --- |
 | `plan` | The plan as JSON (`bynk deploy --dry-run --format json`), including `order`, each context's `kv`, `queues`, `migration`, `secrets` (with `origin`: `declared`, `read` or `supplied`), `secrets_complete` and `binds_to`, and any `orphans`. Set for real deploys too, from a dry run that precedes them. |
-| `contexts` | Space-separated worker names in deploy order, such as `shop-payment shop-orders`. After a successful real deploy, these are the contexts deployed. |
+| `contexts` | Space-separated worker names in deploy order, such as `shop-payment shop-orders`. The driver pushes every context in the plan (each plan action is `deploy` or `redeploy`; none is skipped), so after a successful real deploy these are the contexts deployed. |
 | `lock-changed` | `"true"` if a real deploy changed `bynk.deploy.lock`, otherwise `"false"`. Always `"false"` for a dry run. |
 
 The driver doesn't report Worker URLs. Wrangler prints them in the log.
