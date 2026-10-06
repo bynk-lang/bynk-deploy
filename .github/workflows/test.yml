@@ -5,14 +5,32 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Bynk version to test, exact or "latest" (empty for the pinned baseline)
+        type: string
+        default: ""
+  # bynk-canary.yml calls this at each new Bynk release, so the plan
+  # assertions below also run against releases newer than the baseline.
+  workflow_call:
+    inputs:
+      version:
+        description: Bynk version to test, exact or "latest" (empty for the pinned baseline)
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 # Every run is a dry run: `bynk deploy --dry-run` never authenticates, so no
 # Cloudflare credentials are needed. The assertions read the JSON plan.
+#
+# Push and pull_request runs use the pinned baseline, so a red build means the
+# change broke something, not that a new compiler came out. Bump the baseline
+# deliberately, ideally in the same PR as any deploy.sh change the new release
+# needs.
 env:
-  BYNK_VERSION: 0.303.4
+  BYNK_VERSION: ${{ inputs.version || '0.303.4' }}
 
 jobs:
   single:
