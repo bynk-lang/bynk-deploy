@@ -1,0 +1,5 @@
+# Fixture for bynk-deploy's dry-run tests: one context with an HTTP service and
+# an agent.
+[project]
+name = "notes"
+version = "0.1.0"

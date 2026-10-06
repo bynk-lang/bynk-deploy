@@ -1,7 +1,6 @@
 name: Bynk Deploy
 description: >-
-  Compile a Bynk project and deploy the generated Cloudflare Worker(s) with
-  wrangler.
+  Deploy a Bynk project to Cloudflare Workers with the `bynk deploy` driver.
 author: bynk-lang
 
 branding:
@@ -18,42 +17,63 @@ inputs:
     required: false
     default: accuser/bynk
   working-directory:
-    description: Project root to build from.
+    description: Project root, the directory that holds `bynk.toml`.
     required: false
     default: "."
-  source:
-    description: Source path passed to `bynkc compile`.
-    required: false
-    default: src
-  output:
-    description: Build output directory (Workers are emitted under <output>/workers/).
-    required: false
-    default: .bynk/build
-  workers:
+  context:
     description: >-
-      Optional space-separated list of worker names to deploy. Empty deploys
-      every emitted worker.
+      Deploy this one context alone (`--context`), by dotted name or worker
+      name. Its dependencies are not deployed, and the deploy is refused if a
+      context it binds to has never been deployed. Empty deploys every context
+      in Service Binding order.
     required: false
     default: ""
   environment:
-    description: Optional wrangler environment (passed as `--env`).
+    description: Target environment (`--env`). Empty is the driver's `default`.
     required: false
     default: ""
   dry-run:
-    description: Run `wrangler deploy --dry-run` instead of deploying.
+    description: Print the plan (`--dry-run`) without touching Cloudflare.
     required: false
     default: "false"
+  plan-format:
+    description: >-
+      How a dry run prints the plan in the log: `text` (the driver's `short`
+      format) or `json`. The `plan` output is always JSON.
+    required: false
+    default: json
+  secrets:
+    description: >-
+      Multiline dotenv content (`NAME=value` per line), passed to the driver as
+      `--secrets-file`. Every name supplied here is set on every deployed
+      context. Values are masked and the file is deleted after the run.
+    required: false
+    default: ""
+  force-secrets:
+    description: >-
+      Overwrite secrets that are already set (`--force`). Use after rotating a
+      value; by default only missing secrets are set.
+    required: false
+    default: "false"
+  extra-args:
+    description: >-
+      Arguments forwarded to `wrangler deploy` after `--`, split on whitespace
+      (newlines count as whitespace; no shell quoting). `--env`/`--environment`
+      here is rejected by the
+      driver; use the `environment` input.
+    required: false
+    default: ""
   node-version:
-    description: Node.js version to set up for wrangler.
+    description: Node.js version to set up for Wrangler. The driver needs 22 or later.
     required: false
-    default: "20"
-  wrangler-version:
-    description: wrangler version to run via npx (e.g. "3" or "latest").
-    required: false
-    default: latest
+    default: "22"
   cloudflare-api-token:
-    description: Cloudflare API token (set as CLOUDFLARE_API_TOKEN for wrangler).
-    required: true
+    description: >-
+      Cloudflare API token (set as CLOUDFLARE_API_TOKEN). A real deploy needs
+      this or CLOUDFLARE_API_TOKEN in the step's env; a dry run never
+      authenticates.
+    required: false
+    default: ""
   cloudflare-account-id:
     description: Cloudflare account ID (set as CLOUDFLARE_ACCOUNT_ID).
     required: false
@@ -63,9 +83,34 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+outputs:
+  plan:
+    description: The deploy plan as JSON (`bynk deploy --dry-run --format json`).
+    value: ${{ steps.plan.outputs.plan }}
+  contexts:
+    description: >-
+      Space-separated worker names in deploy order. The driver pushes every
+      one (each plan action is `deploy` or `redeploy`), so after a successful
+      real deploy these are the contexts that were deployed.
+    value: ${{ steps.plan.outputs.contexts }}
+  lock-changed:
+    description: >-
+      "true" if a real deploy changed `bynk.deploy.lock`, which must then be
+      committed. Always "false" for a dry run.
+    value: ${{ steps.lock.outputs.changed || 'false' }}
+
 runs:
   using: composite
   steps:
+    - name: Check project
+      shell: bash
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_PLAN_FORMAT: ${{ inputs.plan-format }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
+      run: ${{ github.action_path }}/scripts/deploy.sh check
+
     - name: Install Bynk
       uses: bynk-lang/setup-bynk@v1
       with:
@@ -74,47 +119,58 @@ runs:
         github-token: ${{ inputs.github-token }}
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4 # pin to a release SHA before publishing
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Compile
+    - name: Write secrets file
+      id: secrets
+      if: inputs.secrets != ''
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: bynkc compile ${{ inputs.source }} --output ${{ inputs.output }}
+      env:
+        INPUT_SECRETS: ${{ inputs.secrets }}
+      run: ${{ github.action_path }}/scripts/deploy.sh secrets
 
-    - name: Deploy worker(s)
+    - name: Plan
+      id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
-        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
-        OUTPUT: ${{ inputs.output }}
-        WORKERS: ${{ inputs.workers }}
-        ENVIRONMENT: ${{ inputs.environment }}
-        DRY_RUN: ${{ inputs.dry-run }}
-        WRANGLER_VERSION: ${{ inputs.wrangler-version }}
-      run: |
-        set -euo pipefail
-        workers_dir="${OUTPUT}/workers"
-        [ -d "$workers_dir" ] || { echo "::error::no workers emitted under ${workers_dir}"; exit 1; }
+        INPUT_CONTEXT: ${{ inputs.context }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_PLAN_FORMAT: ${{ inputs.plan-format }}
+        INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
+        SECRETS_FILE: ${{ steps.secrets.outputs.path }}
+      run: ${{ github.action_path }}/scripts/deploy.sh plan
 
-        args=(deploy)
-        [ -n "${ENVIRONMENT}" ] && args+=(--env "${ENVIRONMENT}")
-        [ "${DRY_RUN}" = "true" ] && args+=(--dry-run)
+    - name: Deploy
+      if: inputs.dry-run != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_CONTEXT: ${{ inputs.context }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
+        INPUT_CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        INPUT_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        SECRETS_FILE: ${{ steps.secrets.outputs.path }}
+      run: ${{ github.action_path }}/scripts/deploy.sh deploy
 
-        deployed=0
-        for dir in "$workers_dir"/*/; do
-          name="$(basename "$dir")"
-          [ -f "${dir}wrangler.toml" ] || continue
-          if [ -n "${WORKERS}" ] && ! grep -qw "$name" <<<"${WORKERS}"; then
-            echo "Skipping ${name} (not in workers filter)"
-            continue
-          fi
-          echo "::group::Deploying ${name}"
-          ( cd "$dir" && npx --yes "wrangler@${WRANGLER_VERSION}" "${args[@]}" )
-          echo "::endgroup::"
-          deployed=$((deployed + 1))
-        done
-        [ "$deployed" -gt 0 ] || { echo "::error::no workers matched"; exit 1; }
-        echo "Deployed ${deployed} worker(s)"
+    - name: Check bynk.deploy.lock
+      id: lock
+      if: always() && inputs.dry-run != 'true' && steps.plan.outcome == 'success'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: ${{ github.action_path }}/scripts/deploy.sh lock
+
+    - name: Remove secrets file
+      if: always() && steps.secrets.outputs.path != ''
+      shell: bash
+      env:
+        SECRETS_FILE: ${{ steps.secrets.outputs.path }}
+      run: ${{ github.action_path }}/scripts/deploy.sh cleanup

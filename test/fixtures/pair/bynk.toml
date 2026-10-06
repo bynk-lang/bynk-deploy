@@ -1,0 +1,5 @@
+# Fixture for bynk-deploy's dry-run tests: two contexts, where `shop.orders`
+# consumes `shop.payment`, so the plan must deploy payment first.
+[project]
+name = "shop"
+version = "0.1.0"
