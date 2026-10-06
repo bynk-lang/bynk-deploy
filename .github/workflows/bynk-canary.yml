@@ -6,10 +6,15 @@
 # listed in bynk-lang/.github's canary/repos.json, and the canary GitHub App is
 # installed on it. See https://github.com/bynk-lang/.github/blob/main/canary/README.md
 #
-# The canary runs the released bynk-deploy@v2 as a dry run of the `single`
-# fixture, which compiles the project and plans the deploy without touching
-# Cloudflare. test.yml's assertions on the JSON plan stay pinned to
-# BYNK_VERSION; this only proves the action still works end to end.
+# Two things run at the dispatched version:
+# - `plan`: test.yml, this repository's own tests. Its assertions on the JSON
+#   plan (`order`, `secrets[].origin`, `migration`, ...) catch a release that
+#   changes what deploy.sh depends on. These test the action in this
+#   repository (`uses: ./`).
+# - `canary`: the released bynk-deploy@v2 as a dry run of the `single`
+#   fixture, the way users run it.
+# `plan`'s result is passed in as `upstream-result`, so a break in either
+# opens or updates the one `canary` issue.
 name: Bynk canary
 
 on:
@@ -27,11 +32,20 @@ permissions:
   issues: write
 
 jobs:
+  plan:
+    name: Plan tests
+    uses: ./.github/workflows/test.yml
+    with:
+      version: ${{ github.event.client_payload.version || inputs.version || 'latest' }}
+
   canary:
     name: Canary
+    needs: plan
+    if: ${{ !cancelled() }}
     uses: bynk-lang/.github/.github/workflows/canary.yml@v1
     with:
       version: ${{ github.event.client_payload.version || inputs.version || 'latest' }}
+      upstream-result: ${{ needs.plan.result }}
       kind: action
       working-directory: test/fixtures/single
       ci: false                # the dry run compiles the project
