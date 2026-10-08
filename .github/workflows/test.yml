@@ -30,7 +30,7 @@ permissions:
 # deliberately, ideally in the same PR as any deploy.sh change the new release
 # needs.
 env:
-  BYNK_VERSION: ${{ inputs.version || '0.307.0' }}
+  BYNK_VERSION: ${{ inputs.version || '0.313.0' }}
 
 jobs:
   single:
@@ -64,7 +64,9 @@ jobs:
           set -euo pipefail
           check() { echo "$PLAN" | jq -e "$1" >/dev/null || { echo "::error::plan check failed: $1"; echo "$PLAN"; exit 1; }; }
           check '.order == ["notes"]'
-          check '.contexts[0].migration == {"tag": "v1", "applied_by": "wrangler deploy"}'
+          # From Bynk 0.313.0 agents are declared in Wrangler's `exports`, as
+          # SQLite-backed Durable Objects, not by a `v1` migration.
+          check '.contexts[0].durable_objects == [{"class": "Note", "storage": "sqlite", "reconciled_by": "Cloudflare"}]'
           check '.contexts[0].secrets | map(select(.name == "AUTH_JWT_SECRET"))[0].origin == "declared"'
           check '.contexts[0].secrets | map(select(.name == "GREETING"))[0].origin == "read"'
           check '.contexts[0].secrets | map(select(.name == "STRIPE_KEY"))[0].origin == "supplied"'
@@ -120,7 +122,7 @@ jobs:
           check '.contexts | map(.worker) == ["shop-payment", "shop-orders"]'
           check '.contexts[1].binds_to == ["shop-payment"]'
           check '.contexts[0].binds_to == []'
-          check '[.contexts[].migration] == [null, null]'
+          check '[.contexts[].durable_objects] == [[], []]'
           [ "$CONTEXTS" = "shop-payment shop-orders" ] || { echo "::error::contexts output was '$CONTEXTS'"; exit 1; }
 
       - name: Dry run of one context whose dependency was never deployed

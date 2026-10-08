@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: bynk-lang/bynk-deploy@v2
         with:
-          version: 0.307.0
+          version: 0.313.0
           cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 ```
@@ -49,7 +49,7 @@ so it needs no token:
 - uses: bynk-lang/bynk-deploy@v2
   id: plan
   with:
-    version: 0.307.0
+    version: 0.313.0
     dry-run: "true"
     plan-format: text
 - env:
@@ -62,7 +62,7 @@ Deploy to a named environment:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.307.0
+    version: 0.313.0
     environment: staging
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
@@ -72,7 +72,7 @@ Re-push one context in a topology that is already live:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.307.0
+    version: 0.313.0
     context: commerce.orders
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
@@ -90,7 +90,7 @@ lines in `secrets`:
 ```yaml
 - uses: bynk-lang/bynk-deploy@v2
   with:
-    version: 0.307.0
+    version: 0.313.0
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     secrets: |
@@ -154,9 +154,9 @@ bynk: KV namespace for `<worker>` is unrecorded; provision locally first and com
 ```
 
 Run the first deploy locally (`bynk deploy`), commit `bynk.deploy.lock`, then let
-CI push later builds. The restriction is KV's alone. CI can create queues, apply
-Durable Object migrations and set secrets, because all of those are identified
-by names that come from your source.
+CI push later builds. The restriction is KV's alone. CI can create queues,
+declare Durable Objects and set secrets, because all of those are identified by
+names that come from your source.
 
 ## Inputs
 
@@ -181,7 +181,7 @@ by names that come from your source.
 
 | Output | Description |
 | --- | --- |
-| `plan` | The plan as JSON (`bynk deploy --dry-run --format json`), including `order`, each context's `kv`, `queues`, `migration`, `secrets` (with `origin`: `declared`, `read` or `supplied`), `secrets_complete` and `binds_to`, and any `orphans`. Set for real deploys too, from a dry run that precedes them. |
+| `plan` | The plan as JSON (`bynk deploy --dry-run --format json`), including `order`, each context's `kv`, `queues`, `durable_objects` (from Bynk 0.313.0; `migration` before it), `secrets` (with `origin`: `declared`, `read` or `supplied`), `secrets_complete` and `binds_to`, and any `orphans`. Set for real deploys too, from a dry run that precedes them. |
 | `contexts` | Space-separated worker names in deploy order, such as `shop-payment shop-orders`. The driver pushes every context in the plan (each plan action is `deploy` or `redeploy`; none is skipped), so after a successful real deploy these are the contexts deployed. |
 | `lock-changed` | `"true"` if a real deploy changed `bynk.deploy.lock`, otherwise `"false"`. Always `"false"` for a dry run. |
 
@@ -214,7 +214,10 @@ order:
 3. `npx --yes wrangler@4`.
 
 To pin a version, add `wrangler` to the project's `devDependencies` and run
-`npm ci` in `working-directory` before this action.
+`npm ci` in `working-directory` before this action. From Bynk 0.313.0, a
+project with agents needs Wrangler **4.107.0 or later**: agents are declared in
+Wrangler's `exports` table as SQLite-backed Durable Objects, which also lets
+them deploy on the Workers Free plan.
 
 ### Compile errors
 
