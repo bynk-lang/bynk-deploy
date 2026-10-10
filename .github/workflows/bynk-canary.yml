@@ -51,7 +51,3 @@ jobs:
       working-directory: test/fixtures/single
       ci: false                # the dry run compiles the project
       deploy-dry-run: true
-    secrets:
-      # Optional: report results to the compat board. Skipped unless both are set.
-      report-url: ${{ secrets.BYNK_CANARY_REPORT_URL }}
-      report-key: ${{ secrets.BYNK_CANARY_REPORT_KEY }}
