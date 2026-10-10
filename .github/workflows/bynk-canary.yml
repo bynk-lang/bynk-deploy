@@ -30,6 +30,7 @@ on:
 permissions:
   contents: read
   issues: write
+  id-token: write   # canary.yml reports with the run's GitHub OIDC token
 
 jobs:
   plan:
