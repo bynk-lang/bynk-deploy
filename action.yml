@@ -15,7 +15,7 @@ inputs:
   repository:
     description: The owner/name repo that publishes Bynk releases.
     required: false
-    default: accuser/bynk
+    default: bynk-lang/bynk
   working-directory:
     description: Project root, the directory that holds `bynk.toml`.
     required: false

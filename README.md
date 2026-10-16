@@ -163,7 +163,7 @@ names that come from your source.
 | Input | Default | Description |
 | --- | --- | --- |
 | `version` | `latest` | Bynk version (forwarded to setup-bynk). Pin it for reproducible deploys. |
-| `repository` | `accuser/bynk` | Release repository. |
+| `repository` | `bynk-lang/bynk` | Release repository. |
 | `working-directory` | `.` | Project root. Must contain `bynk.toml`. |
 | `context` | `""` | `--context`: deploy this one context, by dotted or worker name. Empty deploys every context in order. |
 | `environment` | `""` | `--env`. Empty is the driver's `default` environment. |
