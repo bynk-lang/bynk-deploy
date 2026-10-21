@@ -1,3 +1,17 @@
-version = 1
+version = 2
 
 [events]
+
+[agents."notes.Note"]
+version = 1
+floor = 1
+
+[[agents."notes.Note".shapes]]
+version = 1
+additive = false
+
+[[agents."notes.Note".shapes.fields]]
+name = "text"
+kind = "Cell"
+type = "String"
+refinement = "String"
