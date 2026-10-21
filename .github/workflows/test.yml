@@ -30,7 +30,7 @@ permissions:
 # deliberately, ideally in the same PR as any deploy.sh change the new release
 # needs.
 env:
-  BYNK_VERSION: ${{ inputs.version || '0.313.0' }}
+  BYNK_VERSION: ${{ inputs.version || '0.377.2' }}
 
 jobs:
   single:
