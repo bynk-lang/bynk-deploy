@@ -4,11 +4,11 @@ consumes bynk { Secrets }
 
 type UserId = String where NonEmpty
 
--- A declared secret: `bynk deploy` reads the name out of the compiled actor.
+// A declared secret: `bynk deploy` reads the name out of the compiled actor.
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
--- One note per name (a Cloudflare Durable Object), so the plan carries a
--- migration line.
+// One note per name (a Cloudflare Durable Object), so the plan carries a
+// migration line.
 agent Note {
 	key name: String
 
@@ -26,7 +26,7 @@ service api from http {
 		Ok(saved)
 	}
 
-	-- A read secret: a literal `Secrets.get` name.
+	// A read secret: a literal `Secrets.get` name.
 	on GET("/greeting") () -> Effect[HttpResult[String]] by Visitor given Secrets {
 		let greeting <- Secrets.get("GREETING")
 		match greeting {
