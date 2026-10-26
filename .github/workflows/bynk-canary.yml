@@ -51,3 +51,6 @@ jobs:
       working-directory: test/fixtures/single
       ci: false                # the dry run compiles the project
       deploy-dry-run: true
+      bump: true            # propose moving BYNK_VERSION to a newer release that passes
+      bump-auto-merge: true # and merge that once its checks pass
+    secrets: inherit        # the bump App's BUMP_APP_ID and BUMP_APP_KEY
