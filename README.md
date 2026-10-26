@@ -144,6 +144,46 @@ The action never commits. After a real deploy (successful or not) it runs
 emits a warning and sets the `lock-changed` output to `"true"`. Commit the
 change.
 
+### Opening the pull request for you
+
+Given `lock-pr-token`, the action proposes the commit itself whenever the lock
+changed:
+
+- It resets a `bynk-deploy/lock` branch to the deployed commit, and adds the
+  changed `bynk.deploy.lock` to it, with `bynk.schema.lock` if that changed
+  too. With an `environment` or a `working-directory` other than `.`, the
+  branch name says which (`bynk-deploy/lock-staging-apps-web`).
+- It opens a pull request onto the deployed branch, or leaves the open one,
+  now updated. A later deploy's lock replaces an unmerged one.
+- Merging it deploys again. That deploy has nothing new to record, so it opens
+  no further pull request.
+
+It still never pushes to the deployed branch. The commits are made through the
+contents API, as the token's owner.
+
+Use a GitHub App installation token with **Contents** and **Pull requests**
+write access, minted in the job:
+
+```yaml
+- uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+  id: app-token
+  with:
+    client-id: ${{ secrets.BUMP_APP_ID }}
+    private-key: ${{ secrets.BUMP_APP_KEY }}
+    permission-contents: write
+    permission-pull-requests: write
+- uses: bynk-lang/bynk-deploy@v2
+  with:
+    version-file: BYNK_VERSION
+    cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    lock-pr-token: ${{ steps.app-token.outputs.token }}
+```
+
+`GITHUB_TOKEN` won't do: a pull request it opens starts no workflows, so the
+lock change would never be checked, and an organisation can forbid it opening
+pull requests at all.
+
 **CI cannot bootstrap a new KV namespace.** A namespace id is minted by
 Cloudflare, and a CI job that creates one but can't commit it leaves an orphan
 nobody can find again. So when `CI` is set (GitHub sets it), a context whose KV
@@ -163,6 +203,7 @@ names that come from your source.
 | Input | Default | Description |
 | --- | --- | --- |
 | `version` | `latest` | Bynk version (forwarded to setup-bynk). Pin it for reproducible deploys. |
+| `version-file` | `""` | A file holding an exact version, such as `BYNK_VERSION`, relative to the workspace. Use this or `version`, not both. |
 | `repository` | `bynk-lang/bynk` | Release repository. |
 | `working-directory` | `.` | Project root. Must contain `bynk.toml`. |
 | `context` | `""` | `--context`: deploy this one context, by dotted or worker name. Empty deploys every context in order. |
@@ -175,6 +216,7 @@ names that come from your source.
 | `node-version` | `22` | Node.js for Wrangler. The driver requires 22 or later. |
 | `cloudflare-api-token` | `""` | Cloudflare API token, set as `CLOUDFLARE_API_TOKEN`. A real deploy needs this or `CLOUDFLARE_API_TOKEN` in the step's `env:`; the input wins if both are set. A dry run needs neither. |
 | `cloudflare-account-id` | `""` | Cloudflare account ID, set as `CLOUDFLARE_ACCOUNT_ID`. |
+| `lock-pr-token` | `""` | A token that can push branches and open pull requests, such as a GitHub App installation token. When a real deploy changes `bynk.deploy.lock`, the action opens a pull request that commits it. See [The lock file](#the-lock-file). |
 | `github-token` | `${{ github.token }}` | Token for setup-bynk. |
 
 ## Outputs
@@ -184,6 +226,7 @@ names that come from your source.
 | `plan` | The plan as JSON (`bynk deploy --dry-run --format json`), including `order`, each context's `kv`, `queues`, `durable_objects` (from Bynk 0.313.0; `migration` before it), `secrets` (with `origin`: `declared`, `read` or `supplied`), `secrets_complete` and `binds_to`, and any `orphans`. Set for real deploys too, from a dry run that precedes them. |
 | `contexts` | Space-separated worker names in deploy order, such as `shop-payment shop-orders`. The driver pushes every context in the plan (each plan action is `deploy` or `redeploy`; none is skipped), so after a successful real deploy these are the contexts deployed. |
 | `lock-changed` | `"true"` if a real deploy changed `bynk.deploy.lock`, otherwise `"false"`. Always `"false"` for a dry run. |
+| `lock-pr` | The URL of the pull request that commits the changed lock, when `lock-pr-token` was given. Otherwise empty. |
 
 The driver doesn't report Worker URLs. Wrangler prints them in the log.
 

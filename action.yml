@@ -12,6 +12,13 @@ inputs:
     description: Bynk version to install (passed to setup-bynk).
     required: false
     default: latest
+  version-file:
+    description: >-
+      A file holding the exact Bynk version to install, such as the
+      repository's BYNK_VERSION, relative to the workspace. Use this or
+      version, not both.
+    required: false
+    default: ""
   repository:
     description: The owner/name repo that publishes Bynk releases.
     required: false
@@ -78,6 +85,17 @@ inputs:
     description: Cloudflare account ID (set as CLOUDFLARE_ACCOUNT_ID).
     required: false
     default: ""
+  lock-pr-token:
+    description: >-
+      A token that may push branches and open pull requests here, such as a
+      GitHub App installation token. When a real deploy changes
+      bynk.deploy.lock, the action commits it (and bynk.schema.lock, if that
+      changed too) to a bynk-deploy/lock branch and opens a pull request onto
+      the deployed branch, or updates the open one. Empty leaves committing to
+      you, as before. GITHUB_TOKEN's pull requests start no workflows, so use
+      an App token.
+    required: false
+    default: ""
   github-token:
     description: Token for setup-bynk's API calls.
     required: false
@@ -98,6 +116,11 @@ outputs:
       "true" if a real deploy changed `bynk.deploy.lock`, which must then be
       committed. Always "false" for a dry run.
     value: ${{ steps.lock.outputs.changed || 'false' }}
+  lock-pr:
+    description: >-
+      The URL of the pull request that commits the changed lock file, when
+      lock-pr-token was given and the lock changed; otherwise empty.
+    value: ${{ steps.lock-pr.outputs.url }}
 
 runs:
   using: composite
@@ -111,10 +134,32 @@ runs:
         INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
       run: ${{ github.action_path }}/scripts/deploy.sh check
 
+    # Read here rather than by setup-bynk, so this works whichever setup-bynk
+    # v1 is current. The same rules as setup-bynk's version-file.
+    - name: Resolve the version input
+      id: version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_VERSION_FILE: ${{ inputs.version-file }}
+      run: |
+        set -euo pipefail
+        want="${INPUT_VERSION:-latest}"
+        file="$INPUT_VERSION_FILE"
+        if [ -n "$file" ]; then
+          die() { echo "::error::bynk-deploy: $*" >&2; exit 1; }
+          [ "$want" = latest ] || die "set version or version-file, not both"
+          [ -f "$file" ] || die "version-file $file does not exist"
+          want="$(tr -d '[:space:]' < "$file")"
+          [[ "$want" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] \
+            || die "version-file $file must hold an exact version such as 0.404.0, not '$want'"
+        fi
+        echo "version=$want" >> "$GITHUB_OUTPUT"
+
     - name: Install Bynk
       uses: bynk-lang/setup-bynk@v1
       with:
-        version: ${{ inputs.version }}
+        version: ${{ steps.version.outputs.version }}
         repository: ${{ inputs.repository }}
         github-token: ${{ inputs.github-token }}
 
@@ -167,6 +212,17 @@ runs:
       env:
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: ${{ github.action_path }}/scripts/deploy.sh lock
+
+    - name: Open the lock pull request
+      id: lock-pr
+      if: always() && steps.lock.outputs.changed == 'true' && inputs.lock-pr-token != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.lock-pr-token }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+      run: ${{ github.action_path }}/scripts/deploy.sh lock-pr
 
     - name: Remove secrets file
       if: always() && steps.secrets.outputs.path != ''

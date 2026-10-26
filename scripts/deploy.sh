@@ -4,7 +4,7 @@
 # is interpolated into the shell by the workflow.
 set -euo pipefail
 
-phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|lock|cleanup>}"
+phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|lock|lock-pr|cleanup>}"
 
 # The arguments every `bynk deploy` invocation shares, so the plan step and the
 # deploy step can never disagree about what they are describing.
@@ -174,6 +174,65 @@ case "$phase" in
       fi
     fi
     echo "changed=${changed}" >>"$GITHUB_OUTPUT"
+    ;;
+
+  lock-pr)
+    # Opens (or updates) the pull request that commits the lock files this
+    # deploy changed, onto the branch it deployed. The commits go through the
+    # contents API, so they are made as the token's owner (a GitHub App's bot)
+    # with no git identity or push credentials on the runner. The branch is
+    # reset to the deployed commit each time, so a later deploy's lock replaces
+    # an unmerged one, and merging it deploys again with nothing to record.
+    : "${GH_TOKEN:?lock-pr needs lock-pr-token}"
+    repo="${GITHUB_REPOSITORY:?}"
+    if [ "${GITHUB_REF_TYPE:-branch}" != branch ]; then
+      echo "::warning::bynk.deploy.lock changed, but ${GITHUB_REF_NAME:-this ref} is not a branch to open a pull request against. Commit it by hand."
+      exit 0
+    fi
+    base="${GITHUB_REF_NAME:?}"
+    dir="${INPUT_WORKING_DIRECTORY:-.}"
+    dir="${dir%/}"; dir="${dir#./}"
+    [ "$dir" = . ] && dir=""
+    branch="bynk-deploy/lock"
+    [ -n "${INPUT_ENVIRONMENT:-}" ] && branch="${branch}-${INPUT_ENVIRONMENT}"
+    [ -n "$dir" ] && branch="${branch}-$(tr -c 'A-Za-z0-9._\n-' '-' <<<"$dir")"
+
+    files=()
+    for f in bynk.deploy.lock bynk.schema.lock; do
+      [ -f "$f" ] && [ -n "$(git status --porcelain -- "$f")" ] && files+=("$f")
+    done
+    if [ "${#files[@]}" -eq 0 ]; then
+      echo "No lock file changed; nothing to propose."
+      exit 0
+    fi
+
+    if gh api "repos/${repo}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+      gh api -X PATCH "repos/${repo}/git/refs/heads/${branch}" -f sha="${GITHUB_SHA:?}" -F force=true >/dev/null
+    else
+      gh api -X POST "repos/${repo}/git/refs" -f ref="refs/heads/${branch}" -f sha="${GITHUB_SHA:?}" >/dev/null
+    fi
+    run_url="${GITHUB_SERVER_URL:-https://github.com}/${repo}/actions/runs/${GITHUB_RUN_ID:-0}"
+    for f in "${files[@]}"; do
+      path="${dir:+${dir}/}${f}"
+      sha="$(gh api "repos/${repo}/contents/${path}?ref=${branch}" --jq .sha 2>/dev/null || true)"
+      gh api -X PUT "repos/${repo}/contents/${path}" \
+        -f message="Record the deploy in ${path}" \
+        -f content="$(base64 <"$f" | tr -d '\n')" \
+        -f branch="$branch" \
+        ${sha:+-f sha="$sha"} >/dev/null
+    done
+
+    title="Record the deploy in bynk.deploy.lock"
+    [ -n "${INPUT_ENVIRONMENT:-}" ] && title="${title} (${INPUT_ENVIRONMENT})"
+    [ -n "$dir" ] && title="${title} for ${dir}"
+    url="$(gh pr list --repo "$repo" --head "$branch" --base "$base" --state open --json url --jq '.[0].url // empty')"
+    if [ -z "$url" ]; then
+      list="$(printf '`%s`, ' "${files[@]}")"
+      url="$(gh pr create --repo "$repo" --head "$branch" --base "$base" --title "$title" --body \
+        "The [deploy of ${GITHUB_SHA:0:7}](${run_url}) changed ${list%, }. Every later deploy relies on what it records, so merge this before anything else needs it. Merging deploys again, and that deploy has nothing new to record.")"
+    fi
+    echo "::notice::${title}: ${url}"
+    echo "url=${url}" >>"$GITHUB_OUTPUT"
     ;;
 
   cleanup)
