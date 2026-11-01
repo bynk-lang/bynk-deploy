@@ -198,6 +198,59 @@ CI push later builds. The restriction is KV's alone. CI can create queues,
 declare Durable Objects and set secrets, because all of those are identified by
 names that come from your source.
 
+## Smoke-testing the deploy
+
+With `smoke: "true"`, a successful real deploy is followed by
+
+```sh
+bynk test --smoke --against <target>
+```
+
+which calls every `from http` route of the deployed Workers with arguments
+Bynk fabricates. A case fails on a 5xx, on a status no `HttpResult` carries, or
+on a body that doesn't decode as the route's declared type. That catches a
+deploy that builds but doesn't answer, or a Worker that skews from the build. A
+failure fails the job. **Nothing is rolled back**: the deploy stays in place,
+and the lock steps still run.
+
+The target is a name under `[test.targets]` in `bynk.toml`: `smoke-target`, or
+`environment` when that is empty. One of them must be set. List a URL for each
+Worker the target serves, and the names of the secrets they verify with:
+
+```toml
+[test.targets.staging]
+url.shop-orders = "https://shop-orders-staging.example.workers.dev"
+url.shop-payment = "https://shop-payment-staging.example.workers.dev"
+secrets = ["AUTH_JWT_SECRET"]
+```
+
+The runner reads those secrets from the environment, so set them in the
+step's `env:`. The `secrets` input goes to the Workers, not to the runner.
+
+```yaml
+- uses: bynk-lang/bynk-deploy@v2
+  env:
+    AUTH_JWT_SECRET: ${{ secrets.STAGING_AUTH_JWT_SECRET }}
+  with:
+    version-file: BYNK_VERSION
+    environment: staging
+    cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    smoke: "true"
+```
+
+- **Only `GET` routes are called** against a target, so the smoke writes
+  nothing to a shared deployment. `smoke-unsafe: "true"` calls the routes that
+  write too; keep it for a staging target.
+- **A production target can't be smoked.** `--against` refuses a target marked
+  `production = true`, and the action doesn't work around that.
+- **It covers the whole target.** With `context`, only that context is
+  deployed, but the smoke still calls every Worker the target lists.
+- **It needs a Bynk release with `bynk test --smoke`** (0.461.1 or later). With an
+  older one, the plan step fails saying so, before anything is deployed.
+- The runner needs TypeScript. Without `tsc` on `PATH`, the driver fetches
+  the major version it is tested against through `npx`.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -217,6 +270,9 @@ names that come from your source.
 | `cloudflare-api-token` | `""` | Cloudflare API token, set as `CLOUDFLARE_API_TOKEN`. A real deploy needs this or `CLOUDFLARE_API_TOKEN` in the step's `env:`; the input wins if both are set. A dry run needs neither. |
 | `cloudflare-account-id` | `""` | Cloudflare account ID, set as `CLOUDFLARE_ACCOUNT_ID`. |
 | `lock-pr-token` | `""` | A token that can push branches and open pull requests, such as a GitHub App installation token. When a real deploy changes `bynk.deploy.lock`, the action opens a pull request that commits it. See [The lock file](#the-lock-file). |
+| `smoke` | `false` | After a successful real deploy, run `bynk test --smoke --against <target>` and fail the job if a case fails. See [Smoke-testing the deploy](#smoke-testing-the-deploy). Must be `true` or `false`. |
+| `smoke-target` | `""` | The `[test.targets]` name to smoke. Empty uses `environment`. |
+| `smoke-unsafe` | `false` | `--smoke-unsafe`: also call routes that write. Must be `true` or `false`. |
 | `github-token` | `${{ github.token }}` | Token for setup-bynk. |
 
 ## Outputs
@@ -240,8 +296,10 @@ The driver doesn't report Worker URLs. Wrangler prints them in the log.
    secrets line, a `--context` whose dependency was never deployed, `--env`
    after `--`) before anything touches Cloudflare.
 5. **Deploy** (unless `dry-run`): `bynk deploy --yes …`.
-6. Check `bynk.deploy.lock` and warn if it changed (unless `dry-run`).
-7. Delete the secrets file.
+6. **Smoke** (if `smoke`, after a successful deploy): `bynk test --smoke
+   --against <target>`.
+7. Check `bynk.deploy.lock` and warn if it changed (unless `dry-run`).
+8. Delete the secrets file.
 
 Every step that shells out to the driver runs inside a log group. A failed
 multi-context deploy is resumable, not transactional: contexts that landed stay

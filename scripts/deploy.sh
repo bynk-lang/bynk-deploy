@@ -4,7 +4,7 @@
 # is interpolated into the shell by the workflow.
 set -euo pipefail
 
-phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|lock|lock-pr|cleanup>}"
+phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|smoke|lock|lock-pr|cleanup>}"
 
 # The arguments every `bynk deploy` invocation shares, so the plan step and the
 # deploy step can never disagree about what they are describing.
@@ -33,6 +33,17 @@ common_args() {
   fi
 }
 
+# Refuse a Bynk whose `bynk test` has no --smoke.
+require_smoke() {
+  local help
+  # Read whole first: `grep -q` closing the pipe early would trip pipefail.
+  help="$(bynk test --help 2>/dev/null || true)"
+  if ! grep -q -- '--smoke' <<<"$help"; then
+    echo "::error::smoke needs a Bynk release with \`bynk test --smoke\` (0.461.1 or later); this one has none. Set version to a newer release."
+    exit 1
+  fi
+}
+
 # Write a possibly multi-line value to $GITHUB_OUTPUT.
 set_output() {
   local name="$1" value="$2" delim
@@ -55,7 +66,8 @@ case "$phase" in
       echo "::error::no bynk.toml in \`${dir}\` — set working-directory to the Bynk project root"
       exit 1
     fi
-    for pair in "dry-run=${INPUT_DRY_RUN:-false}" "force-secrets=${INPUT_FORCE_SECRETS:-false}"; do
+    for pair in "dry-run=${INPUT_DRY_RUN:-false}" "force-secrets=${INPUT_FORCE_SECRETS:-false}" \
+      "smoke=${INPUT_SMOKE:-false}" "smoke-unsafe=${INPUT_SMOKE_UNSAFE:-false}"; do
       case "${pair#*=}" in
         true | false) ;;
         *)
@@ -71,6 +83,11 @@ case "$phase" in
         exit 1
         ;;
     esac
+    # Refused here rather than after the deploy, when it is too late to help.
+    if [ "${INPUT_SMOKE:-false}" = "true" ] && [ -z "${INPUT_SMOKE_TARGET:-${INPUT_ENVIRONMENT:-}}" ]; then
+      echo "::error::smoke needs a target: set smoke-target to a [test.targets] name in bynk.toml, or environment to one"
+      exit 1
+    fi
     ;;
 
   secrets)
@@ -117,6 +134,10 @@ case "$phase" in
   plan)
     # Always a dry run, always JSON: offline, side-effect free on Cloudflare,
     # and the source of the `plan` and `contexts` outputs for real deploys too.
+    # A smoke the installed Bynk can't run is refused before the deploy.
+    if [ "${INPUT_SMOKE:-false}" = "true" ] && [ "${INPUT_DRY_RUN}" != "true" ]; then
+      require_smoke
+    fi
     common_args
     plan_file="$(mktemp "${RUNNER_TEMP:-/tmp}/bynk-plan.XXXXXX")"
     echo "::group::bynk deploy --dry-run"
@@ -158,6 +179,28 @@ case "$phase" in
     bynk deploy --yes ${args[@]+"${args[@]}"} || status=$?
     if [ "$status" -ne 0 ]; then
       echo "::error::bynk deploy failed (exit ${status}); contexts that landed stay deployed — fix the cause and re-run"
+      exit "$status"
+    fi
+    ;;
+
+  smoke)
+    # `--against` reads the target's URLs from [test.targets] in bynk.toml and
+    # its secrets from the environment, and refuses one marked production.
+    target="${INPUT_SMOKE_TARGET:-${INPUT_ENVIRONMENT:-}}"
+    : "${target:?smoke needs smoke-target or environment}"
+    require_smoke
+    # No tsc on PATH is fine: the driver runs the TypeScript it is tested
+    # against through npx, which setup-node provides.
+    args=(--smoke --against "$target")
+    if [ "${INPUT_SMOKE_UNSAFE:-false}" = "true" ]; then
+      args+=(--smoke-unsafe)
+    fi
+    echo "::group::bynk test ${args[*]}"
+    trap 'echo "::endgroup::"' EXIT
+    status=0
+    bynk test "${args[@]}" || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "::error::the smoke test of \`${target}\` failed (exit ${status}); the deploy stays in place — see the log above"
       exit "$status"
     fi
     ;;

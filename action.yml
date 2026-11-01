@@ -96,6 +96,27 @@ inputs:
       an App token.
     required: false
     default: ""
+  smoke:
+    description: >-
+      After a successful real deploy, smoke-test it with `bynk test --smoke
+      --against <target>`: every `from http` route of the deployed Workers is
+      called, and the job fails if one answers a 5xx or a body that doesn't
+      decode as its declared type. Nothing is rolled back. Needs a Bynk
+      release with `bynk test --smoke`.
+    required: false
+    default: "false"
+  smoke-target:
+    description: >-
+      The `[test.targets]` name in bynk.toml to smoke. Empty uses
+      `environment`. The target's secrets are read from the step's env.
+    required: false
+    default: ""
+  smoke-unsafe:
+    description: >-
+      Also call the routes that write (`--smoke-unsafe`). By default a smoke
+      against a target calls only `GET` routes. Meant for a staging target.
+    required: false
+    default: "false"
   github-token:
     description: Token for setup-bynk's API calls.
     required: false
@@ -132,6 +153,10 @@ runs:
         INPUT_PLAN_FORMAT: ${{ inputs.plan-format }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
         INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
+        INPUT_SMOKE: ${{ inputs.smoke }}
+        INPUT_SMOKE_TARGET: ${{ inputs.smoke-target }}
+        INPUT_SMOKE_UNSAFE: ${{ inputs.smoke-unsafe }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
       run: ${{ github.action_path }}/scripts/deploy.sh check
 
     # Read here rather than by setup-bynk, so this works whichever setup-bynk
@@ -187,10 +212,12 @@ runs:
         INPUT_PLAN_FORMAT: ${{ inputs.plan-format }}
         INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
+        INPUT_SMOKE: ${{ inputs.smoke }}
         SECRETS_FILE: ${{ steps.secrets.outputs.path }}
       run: ${{ github.action_path }}/scripts/deploy.sh plan
 
     - name: Deploy
+      id: deploy
       if: inputs.dry-run != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -203,6 +230,18 @@ runs:
         INPUT_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
         SECRETS_FILE: ${{ steps.secrets.outputs.path }}
       run: ${{ github.action_path }}/scripts/deploy.sh deploy
+
+    # A failure here fails the job but undoes nothing; the lock steps below
+    # still run, since the deploy itself succeeded.
+    - name: Smoke test
+      if: inputs.smoke == 'true' && inputs.dry-run != 'true' && steps.deploy.outcome == 'success'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_SMOKE_TARGET: ${{ inputs.smoke-target }}
+        INPUT_SMOKE_UNSAFE: ${{ inputs.smoke-unsafe }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+      run: ${{ github.action_path }}/scripts/deploy.sh smoke
 
     - name: Check bynk.deploy.lock
       id: lock
