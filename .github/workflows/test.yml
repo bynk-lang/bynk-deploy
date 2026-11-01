@@ -99,6 +99,17 @@ jobs:
           dry-run: "true"
           plan-format: text
 
+      # Passes only if the smoke step is skipped: there is no deploy to smoke,
+      # and no `preview` target in the fixture.
+      - name: Dry run with smoke on
+        uses: ./
+        with:
+          version: ${{ env.BYNK_VERSION }}
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          smoke: "true"
+          smoke-target: preview
+
   pair:
     name: Two contexts
     runs-on: ubuntu-latest
@@ -293,3 +304,31 @@ jobs:
         with:
           persist-credentials: false
       - run: bash test/lock-pr/run.sh
+
+  # The smoke phase with a stub bynk: what it runs and what it refuses. A real
+  # smoke needs a deploy.
+  smoke:
+    name: The smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash test/smoke/run.sh
+
+      - name: Smoke with no target
+        id: no-target
+        continue-on-error: true
+        uses: ./
+        with:
+          version-file: BYNK_VERSION
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          smoke: "true"
+
+      - name: Assert the refusal
+        shell: bash
+        env:
+          NO_TARGET: ${{ steps.no-target.outcome }}
+        run: |
+          [ "$NO_TARGET" = failure ] || { echo "::error::smoke with no target was '$NO_TARGET', expected failure"; exit 1; }
