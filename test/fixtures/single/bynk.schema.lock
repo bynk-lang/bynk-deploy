@@ -15,3 +15,7 @@ name = "text"
 kind = "Cell"
 type = "String"
 refinement = "String"
+
+[[agents."notes.Note".shapes.fields.paths]]
+path = "text"
+type = "String"
