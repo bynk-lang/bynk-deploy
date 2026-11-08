@@ -223,7 +223,7 @@ jobs:
           git diff --exit-code -- test/fixtures
 
   fixtures:
-    name: Fixtures pass bynkc check
+    name: Fixtures pass bynk check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,16 +231,16 @@ jobs:
         shell: bash
         run: echo "BYNK_VERSION=${REQUESTED:-$(tr -d '[:space:]' < BYNK_VERSION)}" >> "$GITHUB_ENV"
 
-      - uses: bynk-lang/setup-bynk@v1
+      - uses: bynk-lang/setup-bynk@v2
         with:
           version: ${{ env.BYNK_VERSION }}
-      - name: bynkc check
+      - name: bynk check
         shell: bash
         run: |
           set -euo pipefail
           for dir in test/fixtures/*/; do
             echo "::group::${dir}"
-            (cd "$dir" && bynkc check --format short .)
+            (cd "$dir" && bynk check --format short .)
             echo "::endgroup::"
           done
 
@@ -287,8 +287,8 @@ jobs:
           MISSING: ${{ steps.missing.outcome }}
         run: |
           failed=0
-          want="bynkc $(tr -d '[:space:]' < BYNK_VERSION)"; want="${want/bynkc v/bynkc }"
-          got="$(bynkc --version)"
+          want="bynk $(tr -d "[:space:]" < BYNK_VERSION)"; want="${want/bynk v/bynk }"
+          got="$(bynk --version)"
           [ "$got" = "$want" ] || { echo "::error::installed '$got', BYNK_VERSION says '$want'"; failed=1; }
           [ "$BOTH" = failure ] || { echo "::error::version-file with version was '$BOTH', expected failure"; failed=1; }
           [ "$MISSING" = failure ] || { echo "::error::a missing version-file was '$MISSING', expected failure"; failed=1; }

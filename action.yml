@@ -160,7 +160,7 @@ runs:
       run: ${{ github.action_path }}/scripts/deploy.sh check
 
     # Read here rather than by setup-bynk, so this works whichever setup-bynk
-    # v1 is current. The same rules as setup-bynk's version-file.
+    # major is current. The same rules as setup-bynk's version-file.
     - name: Resolve the version input
       id: version
       shell: bash
@@ -182,7 +182,7 @@ runs:
         echo "version=$want" >> "$GITHUB_OUTPUT"
 
     - name: Install Bynk
-      uses: bynk-lang/setup-bynk@v1
+      uses: bynk-lang/setup-bynk@v2
       with:
         version: ${{ steps.version.outputs.version }}
         repository: ${{ inputs.repository }}
