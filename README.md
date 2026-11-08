@@ -246,6 +246,7 @@ step's `env:`. The `secrets` input goes to the Workers, not to the runner.
   `production = true`, and the action doesn't work around that.
 - **It covers the whole target.** With `context`, only that context is
   deployed, but the smoke still calls every Worker the target lists.
+- **It needs Bynk 0.512.9 or later** (setup-bynk v2 installs `bynk` and `bynk-lsp`, not `bynkc`). Pin an earlier bynk-deploy release for older Bynk versions.
 - **It needs a Bynk release with `bynk test --smoke`** (0.461.1 or later). With an
   older one, the plan step fails saying so, before anything is deployed.
 - The runner needs TypeScript. Without `tsc` on `PATH`, the driver fetches
