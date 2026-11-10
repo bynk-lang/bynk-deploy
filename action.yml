@@ -182,7 +182,7 @@ runs:
         echo "version=$want" >> "$GITHUB_OUTPUT"
 
     - name: Install Bynk
-      uses: bynk-lang/setup-bynk@v2
+      uses: bynk-lang/setup-bynk@3ee807123be2578fd5d5be518fbc2b489aef6171 # v2.0.1
       with:
         version: ${{ steps.version.outputs.version }}
         repository: ${{ inputs.repository }}
