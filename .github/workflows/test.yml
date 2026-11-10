@@ -231,7 +231,7 @@ jobs:
         shell: bash
         run: echo "BYNK_VERSION=${REQUESTED:-$(tr -d '[:space:]' < BYNK_VERSION)}" >> "$GITHUB_ENV"
 
-      - uses: bynk-lang/setup-bynk@v2
+      - uses: bynk-lang/setup-bynk@3ee807123be2578fd5d5be518fbc2b489aef6171 # v2.0.1
         with:
           version: ${{ env.BYNK_VERSION }}
       - name: bynk check
