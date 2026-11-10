@@ -34,19 +34,21 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: bynk-lang/bynk-deploy@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
         with:
           version: 0.377.2
           cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 ```
 
+> The org requires actions pinned to a full commit SHA, so these examples name the commit for `v2.2.2` with the version in a comment, which Dependabot reads to propose updates. To pin another release, find its commit with `git ls-remote https://github.com/bynk-lang/bynk-deploy 'refs/tags/v*^{}'`.
+
 Preview the plan without touching Cloudflare. A dry run never authenticates,
 so it needs no token:
 
 ```yaml
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   id: plan
   with:
     version: 0.377.2
@@ -60,7 +62,7 @@ so it needs no token:
 Deploy to a named environment:
 
 ```yaml
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   with:
     version: 0.377.2
     environment: staging
@@ -70,7 +72,7 @@ Deploy to a named environment:
 Re-push one context in a topology that is already live:
 
 ```yaml
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   with:
     version: 0.377.2
     context: commerce.orders
@@ -88,7 +90,7 @@ Put the values in repository or environment secrets and pass them as dotenv
 lines in `secrets`:
 
 ```yaml
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   with:
     version: 0.377.2
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -172,7 +174,7 @@ write access, minted in the job:
     private-key: ${{ secrets.BUMP_APP_KEY }}
     permission-contents: write
     permission-pull-requests: write
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   with:
     version-file: BYNK_VERSION
     cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -228,7 +230,7 @@ The runner reads those secrets from the environment, so set them in the
 step's `env:`. The `secrets` input goes to the Workers, not to the runner.
 
 ```yaml
-- uses: bynk-lang/bynk-deploy@v2
+- uses: bynk-lang/bynk-deploy@422b47aeb37ba7ad0d8ba1f87755ae7e422dc462 # v2.2.2
   env:
     AUTH_JWT_SECRET: ${{ secrets.STAGING_AUTH_JWT_SECRET }}
   with:
