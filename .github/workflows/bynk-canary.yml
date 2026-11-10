@@ -43,8 +43,12 @@ jobs:
     name: Canary
     needs: plan
     if: ${{ !cancelled() }}
-    uses: bynk-lang/.github/.github/workflows/canary.yml@v1
+    uses: bynk-lang/.github/.github/workflows/canary.yml@a3e43de009be70aef77cb53e54994b824859a58b # v1.1.3
     with:
+      # canary.yml takes its scripts from this ref of bynk-lang/.github, so it
+      # names the same commit as `uses:` above. Dependabot moves `uses:` only:
+      # move this to the same commit in that pull request.
+      canary-ref: a3e43de009be70aef77cb53e54994b824859a58b
       version: ${{ github.event.client_payload.version || inputs.version || 'latest' }}
       upstream-result: ${{ needs.plan.result }}
       kind: action
