@@ -318,10 +318,11 @@ order:
 3. `npx --yes wrangler@4`.
 
 To pin a version, add `wrangler` to the project's `devDependencies` and run
-`npm ci` in `working-directory` before this action. From Bynk 0.313.0, a
-project with agents needs Wrangler **4.107.0 or later**: agents are declared in
-Wrangler's `exports` table as SQLite-backed Durable Objects, which also lets
-them deploy on the Workers Free plan.
+`npm ci` in `working-directory` before this action. Bynk enforces its own
+minimum Wrangler version, currently 4.162.0, which moves with each Bynk
+release. `bynk doctor` reports the minimum for your Bynk release. Agents are
+declared in Wrangler's `exports` table as SQLite-backed Durable Objects, which
+also lets them deploy on the Workers Free plan.
 
 ### Compile errors
 
