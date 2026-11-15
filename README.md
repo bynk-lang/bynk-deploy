@@ -138,8 +138,9 @@ Things to know:
 ## The lock file
 
 `bynk.deploy.lock` sits beside `bynk.toml` and **must be committed**. It holds
-the KV namespace ids Cloudflare generated, the contexts that have been deployed,
-and the queues created, with one section per environment. It holds no secrets.
+the ids Cloudflare generated or the driver allocated (KV namespaces, rate
+limiters, Hyperdrive configs), the contexts that have been deployed, and the
+queues created, with one section per environment. It holds no secrets.
 
 The action never commits. After a real deploy (successful or not) it runs
 `git status --porcelain -- bynk.deploy.lock`. If the file changed, the action
@@ -186,19 +187,33 @@ write access, minted in the job:
 lock change would never be checked, and an organisation can forbid it opening
 pull requests at all.
 
-**CI cannot bootstrap a new KV namespace.** A namespace id is minted by
-Cloudflare, and a CI job that creates one but can't commit it leaves an orphan
-nobody can find again. So when `CI` is set (GitHub sets it), a context whose KV
-namespace isn't recorded in the lock file fails with:
+**CI cannot record a new id.** Some resources are identified by an id that
+`bynk deploy` must write into `bynk.deploy.lock`, not by a name from your
+source. Under CI the driver can't count on that id being committed, so when
+`CI` is set (GitHub sets it) it refuses to make one, even with
+`lock-pr-token`:
+
+- **A KV namespace.** Cloudflare mints its id, and one created but never
+  recorded is an orphan nobody can find again.
+- **A rate limiter.** The ledger allocates its namespace id, and one never
+  recorded would be allocated again on the next run, perhaps as another
+  number, resetting its counters.
+- **A Hyperdrive config.** Cloudflare mints its id. A team that deploys only
+  from CI can instead name an existing config with `config_id` in
+  `[deploy.hyperdrive]`.
+
+Each refusal names the resource, for example:
 
 ```
 bynk: KV namespace for `<worker>` is unrecorded; provision locally first and commit bynk.deploy.lock
+bynk: the rate limiter `<binding>` of `<worker>` is unrecorded; deploy locally first and commit bynk.deploy.lock
 ```
 
-Run the first deploy locally (`bynk deploy`), commit `bynk.deploy.lock`, then let
-CI push later builds. The restriction is KV's alone. CI can create queues,
-declare Durable Objects and set secrets, because all of those are identified by
-names that come from your source.
+Run the first deploy of each environment locally (`bynk deploy`), commit
+`bynk.deploy.lock`, then let CI push later builds. CI can create queues, R2
+buckets, D1 databases and Analytics datasets, declare Durable Objects and set
+secrets, because all of those are identified by names that come from your
+source.
 
 ## Smoke-testing the deploy
 
