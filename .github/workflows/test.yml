@@ -333,3 +333,41 @@ jobs:
           NO_TARGET: ${{ steps.no-target.outcome }}
         run: |
           [ "$NO_TARGET" = failure ] || { echo "::error::smoke with no target was '$NO_TARGET', expected failure"; exit 1; }
+
+      - name: Revert with no smoke
+        id: revert-no-smoke
+        continue-on-error: true
+        uses: ./
+        with:
+          version-file: BYNK_VERSION
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          revert-on-smoke-failure: "true"
+
+      - name: Assert the refusal of a revert with no smoke
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.revert-no-smoke.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::revert without smoke was '$OUTCOME', expected failure"; exit 1; }
+
+      # No deploy, so no smoke and no revert: the outputs fall back.
+      - name: Dry run with revert on
+        id: revert-skipped
+        uses: ./
+        with:
+          version-file: BYNK_VERSION
+          working-directory: test/fixtures/single
+          dry-run: "true"
+          smoke: "true"
+          smoke-target: preview
+          revert-on-smoke-failure: "true"
+
+      - name: Assert the revert was skipped
+        shell: bash
+        env:
+          REVERTED: ${{ steps.revert-skipped.outputs.reverted }}
+          REASON: ${{ steps.revert-skipped.outputs.revert-refused-reason }}
+        run: |
+          [ "$REVERTED" = false ] || { echo "::error::reverted was '$REVERTED', expected false"; exit 1; }
+          [ -z "$REASON" ] || { echo "::error::revert-refused-reason was '$REASON', expected empty"; exit 1; }

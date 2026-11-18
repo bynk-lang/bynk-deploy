@@ -253,8 +253,9 @@ case "$phase" in
     out="$(mktemp "${RUNNER_TEMP:-/tmp}/bynk-revert.XXXXXX")"
     echo "::group::bynk revert --yes ${args[*]}"
     status=0
-    bynk revert --yes ${args[@]+"${args[@]}"} >"$out" 2>&1 || status=$?
-    cat "$out"
+    # tee streams the log as it happens, so a cancelled rollback still shows
+    # how far it got, and keeps the file the refusal reason is read from.
+    bynk revert --yes ${args[@]+"${args[@]}"} 2>&1 | tee "$out" || status="${PIPESTATUS[0]}"
     echo "::endgroup::"
     if [ "$status" -eq 0 ]; then
       rm -f "$out"
