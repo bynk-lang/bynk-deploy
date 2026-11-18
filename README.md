@@ -227,8 +227,9 @@ which calls every `from http` route of the deployed Workers with arguments
 Bynk fabricates. A case fails on a 5xx, on a status no `HttpResult` carries, or
 on a body that doesn't decode as the route's declared type. That catches a
 deploy that builds but doesn't answer, or a Worker that skews from the build. A
-failure fails the job. **Nothing is rolled back**: the deploy stays in place,
-and the lock steps still run.
+failure fails the job. **By default nothing is rolled back**: the deploy stays
+in place, and the lock steps still run. See
+[Reverting a failed smoke](#reverting-a-failed-smoke) to change that.
 
 The target is a name under `[test.targets]` in `bynk.toml`: `smoke-target`, or
 `environment` when that is empty. One of them must be set. List a URL for each
@@ -269,6 +270,44 @@ step's `env:`. The `secrets` input goes to the Workers, not to the runner.
 - The runner needs TypeScript. Without `tsc` on `PATH`, the driver fetches
   the major version it is tested against through `npx`.
 
+## Reverting a failed smoke
+
+> **Experimental.** `bynk revert` uses Cloudflare's own rollback (ADR 0754), which
+> hasn't yet been exercised against a live account. Try this input on a
+> non-critical Worker first.
+
+With `revert-on-smoke-failure: "true"` (it needs `smoke: "true"`), a smoke that
+fails after a successful real deploy is followed by
+
+```sh
+bynk revert --env <environment> --yes
+```
+
+scoped with `--context <context>` when `context` is set. The job fails anyway,
+so a reverted deploy is still red. The `reverted` output says whether the
+rollback happened.
+
+- **A revert can be refused.** `bynk revert` refuses rather than roll back
+  unsafely: D1 migrations applied since the target, an agent schema version
+  raised over stored data, contract skew, a changed Durable Object class set,
+  rotated secrets, a gradual split in progress, or a version with no
+  `BYNK_DEPLOY_FACTS` record. The action then writes an `::error::`, leaves the
+  release live, sets `reverted` to `false`, and puts the reason in
+  `revert-refused-reason`. Use those outputs to notify someone or open an issue.
+- **A schema bump is refused straight after the deploy.** Within the 30-minute
+  settling margin after a live deploy, Bynk can't tell whether a Durable Object
+  class holds data, so it refuses to revert a deploy that raised its schema
+  version. That is the safe answer, not a bug.
+- **A revert undoes code, not data.** With `smoke-unsafe: "true"`, whatever the
+  smoke wrote stays written.
+- **The lock steps still run** after a revert, so the lock pull request (or
+  `lock-changed`) reflects what is live, since `bynk revert` rewrites the
+  reverted Workers' contract records.
+- **Credentials.** The revert's dry run reads Cloudflare, and D1 when a D1
+  database is bound, so the deploy token should already cover it.
+- **It needs a Bynk release with `bynk revert`.** With an older one, the plan
+  step fails saying so, before anything is deployed.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -291,6 +330,7 @@ step's `env:`. The `secrets` input goes to the Workers, not to the runner.
 | `smoke` | `false` | After a successful real deploy, run `bynk test --smoke --against <target>` and fail the job if a case fails. See [Smoke-testing the deploy](#smoke-testing-the-deploy). Must be `true` or `false`. |
 | `smoke-target` | `""` | The `[test.targets]` name to smoke. Empty uses `environment`. |
 | `smoke-unsafe` | `false` | `--smoke-unsafe`: also call routes that write. Must be `true` or `false`. |
+| `revert-on-smoke-failure` | `false` | Experimental. After a failed smoke, run `bynk revert --env <environment> --yes`, then fail the job anyway. Needs `smoke: "true"`. See [Reverting a failed smoke](#reverting-a-failed-smoke). Must be `true` or `false`. |
 | `github-token` | `${{ github.token }}` | Token for setup-bynk. |
 
 ## Outputs
@@ -299,6 +339,8 @@ step's `env:`. The `secrets` input goes to the Workers, not to the runner.
 | --- | --- |
 | `plan` | The plan as JSON (`bynk deploy --dry-run --format json`), including `order`, each context's `kv`, `queues`, `durable_objects` (from Bynk 0.313.0; `migration` before it), `secrets` (with `origin`: `declared`, `read` or `supplied`), `secrets_complete` and `binds_to`, and any `orphans`. Set for real deploys too, from a dry run that precedes them. |
 | `contexts` | Space-separated worker names in deploy order, such as `shop-payment shop-orders`. The driver pushes every context in the plan (each plan action is `deploy` or `redeploy`; none is skipped), so after a successful real deploy these are the contexts deployed. |
+| `reverted` | `"true"` if a failed smoke was followed by a successful `bynk revert`, otherwise `"false"`. |
+| `revert-refused-reason` | Why `bynk revert` refused or failed, when `revert-on-smoke-failure` tried one. Otherwise empty. |
 | `lock-changed` | `"true"` if a real deploy changed `bynk.deploy.lock`, otherwise `"false"`. Always `"false"` for a dry run. |
 | `lock-pr` | The URL of the pull request that commits the changed lock, when `lock-pr-token` was given. Otherwise empty. |
 
@@ -316,8 +358,10 @@ The driver doesn't report Worker URLs. Wrangler prints them in the log.
 5. **Deploy** (unless `dry-run`): `bynk deploy --yes …`.
 6. **Smoke** (if `smoke`, after a successful deploy): `bynk test --smoke
    --against <target>`.
-7. Check `bynk.deploy.lock` and warn if it changed (unless `dry-run`).
-8. Delete the secrets file.
+7. **Revert** (if `revert-on-smoke-failure`, after a failed smoke):
+   `bynk revert --env <environment> --yes`.
+8. Check `bynk.deploy.lock` and warn if it changed (unless `dry-run`).
+9. Delete the secrets file.
 
 Every step that shells out to the driver runs inside a log group. A failed
 multi-context deploy is resumable, not transactional: contexts that landed stay

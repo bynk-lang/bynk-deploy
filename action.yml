@@ -117,6 +117,18 @@ inputs:
       against a target calls only `GET` routes. Meant for a staging target.
     required: false
     default: "false"
+  revert-on-smoke-failure:
+    description: >-
+      Experimental. When the smoke test fails after a successful real deploy,
+      run `bynk revert --env <environment> --yes` (with `--context` when
+      `context` is set), then fail the job anyway. `bynk revert` refuses
+      rather than roll back unsafely; a refusal leaves the release live and
+      is reported in `revert-refused-reason`. A revert straight after a deploy
+      that raised an agent schema version is always refused, and a revert
+      does not undo the smoke's writes. Needs `smoke: "true"` and a Bynk
+      release with `bynk revert`.
+    required: false
+    default: "false"
   github-token:
     description: Token for setup-bynk's API calls.
     required: false
@@ -132,6 +144,16 @@ outputs:
       one (each plan action is `deploy` or `redeploy`), so after a successful
       real deploy these are the contexts that were deployed.
     value: ${{ steps.plan.outputs.contexts }}
+  reverted:
+    description: >-
+      "true" if a failed smoke was followed by a successful `bynk revert`;
+      otherwise "false".
+    value: ${{ steps.revert.outputs.reverted || 'false' }}
+  revert-refused-reason:
+    description: >-
+      Why `bynk revert` refused or failed, when `revert-on-smoke-failure`
+      tried one; otherwise empty.
+    value: ${{ steps.revert.outputs.revert-refused-reason }}
   lock-changed:
     description: >-
       "true" if a real deploy changed `bynk.deploy.lock`, which must then be
@@ -156,6 +178,7 @@ runs:
         INPUT_SMOKE: ${{ inputs.smoke }}
         INPUT_SMOKE_TARGET: ${{ inputs.smoke-target }}
         INPUT_SMOKE_UNSAFE: ${{ inputs.smoke-unsafe }}
+        INPUT_REVERT_ON_SMOKE_FAILURE: ${{ inputs.revert-on-smoke-failure }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
       run: ${{ github.action_path }}/scripts/deploy.sh check
 
@@ -213,6 +236,7 @@ runs:
         INPUT_FORCE_SECRETS: ${{ inputs.force-secrets }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
         INPUT_SMOKE: ${{ inputs.smoke }}
+        INPUT_REVERT_ON_SMOKE_FAILURE: ${{ inputs.revert-on-smoke-failure }}
         SECRETS_FILE: ${{ steps.secrets.outputs.path }}
       run: ${{ github.action_path }}/scripts/deploy.sh plan
 
@@ -231,17 +255,34 @@ runs:
         SECRETS_FILE: ${{ steps.secrets.outputs.path }}
       run: ${{ github.action_path }}/scripts/deploy.sh deploy
 
-    # A failure here fails the job but undoes nothing; the lock steps below
-    # still run, since the deploy itself succeeded.
+    # A failure here fails the job; the lock steps below still run, since the
+    # deploy itself succeeded. It undoes nothing unless the revert step below
+    # is switched on.
     - name: Smoke test
+      id: smoke
       if: inputs.smoke == 'true' && inputs.dry-run != 'true' && steps.deploy.outcome == 'success'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         INPUT_SMOKE_TARGET: ${{ inputs.smoke-target }}
         INPUT_SMOKE_UNSAFE: ${{ inputs.smoke-unsafe }}
+        INPUT_REVERT_ON_SMOKE_FAILURE: ${{ inputs.revert-on-smoke-failure }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
       run: ${{ github.action_path }}/scripts/deploy.sh smoke
+
+    # Runs only after a failed smoke. It fails the job whatever it does: a
+    # reverted deploy is still red, and a refused revert leaves the release live.
+    - name: Revert the failed deploy
+      id: revert
+      if: always() && inputs.revert-on-smoke-failure == 'true' && inputs.dry-run != 'true' && steps.smoke.outcome == 'failure'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_CONTEXT: ${{ inputs.context }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        INPUT_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+      run: ${{ github.action_path }}/scripts/deploy.sh revert
 
     - name: Check bynk.deploy.lock
       id: lock

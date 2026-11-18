@@ -4,7 +4,7 @@
 # is interpolated into the shell by the workflow.
 set -euo pipefail
 
-phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|smoke|lock|lock-pr|cleanup>}"
+phase="${1:?usage: deploy.sh <check|secrets|plan|deploy|smoke|revert|lock|lock-pr|cleanup>}"
 
 # The arguments every `bynk deploy` invocation shares, so the plan step and the
 # deploy step can never disagree about what they are describing.
@@ -44,6 +44,22 @@ require_smoke() {
   fi
 }
 
+# Refuse a Bynk that has no `bynk revert`.
+require_revert() {
+  if ! bynk revert --help >/dev/null 2>&1; then
+    echo "::error::revert-on-smoke-failure needs a Bynk release with \`bynk revert\`; this one has none. Set version to a newer release."
+    exit 1
+  fi
+}
+
+# The Cloudflare credentials, from an input or else the caller's `env:`.
+export_cloudflare() {
+  export CLOUDFLARE_API_TOKEN="${INPUT_CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
+  if [ -n "${INPUT_CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    export CLOUDFLARE_ACCOUNT_ID="${INPUT_CLOUDFLARE_ACCOUNT_ID}"
+  fi
+}
+
 # Write a possibly multi-line value to $GITHUB_OUTPUT.
 set_output() {
   local name="$1" value="$2" delim
@@ -67,7 +83,8 @@ case "$phase" in
       exit 1
     fi
     for pair in "dry-run=${INPUT_DRY_RUN:-false}" "force-secrets=${INPUT_FORCE_SECRETS:-false}" \
-      "smoke=${INPUT_SMOKE:-false}" "smoke-unsafe=${INPUT_SMOKE_UNSAFE:-false}"; do
+      "smoke=${INPUT_SMOKE:-false}" "smoke-unsafe=${INPUT_SMOKE_UNSAFE:-false}" \
+      "revert-on-smoke-failure=${INPUT_REVERT_ON_SMOKE_FAILURE:-false}"; do
       case "${pair#*=}" in
         true | false) ;;
         *)
@@ -86,6 +103,11 @@ case "$phase" in
     # Refused here rather than after the deploy, when it is too late to help.
     if [ "${INPUT_SMOKE:-false}" = "true" ] && [ -z "${INPUT_SMOKE_TARGET:-${INPUT_ENVIRONMENT:-}}" ]; then
       echo "::error::smoke needs a target: set smoke-target to a [test.targets] name in bynk.toml, or environment to one"
+      exit 1
+    fi
+    # Refused here: a revert with no smoke could never run.
+    if [ "${INPUT_REVERT_ON_SMOKE_FAILURE:-false}" = "true" ] && [ "${INPUT_SMOKE:-false}" != "true" ]; then
+      echo "::error::revert-on-smoke-failure needs smoke: \"true\", since a failing smoke is what triggers the revert"
       exit 1
     fi
     ;;
@@ -137,6 +159,9 @@ case "$phase" in
     # A smoke the installed Bynk can't run is refused before the deploy.
     if [ "${INPUT_SMOKE:-false}" = "true" ] && [ "${INPUT_DRY_RUN}" != "true" ]; then
       require_smoke
+      if [ "${INPUT_REVERT_ON_SMOKE_FAILURE:-false}" = "true" ]; then
+        require_revert
+      fi
     fi
     common_args
     plan_file="$(mktemp "${RUNNER_TEMP:-/tmp}/bynk-plan.XXXXXX")"
@@ -165,10 +190,7 @@ case "$phase" in
   deploy)
     common_args
     # An input wins; otherwise keep whatever the caller set in `env:`.
-    export CLOUDFLARE_API_TOKEN="${INPUT_CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN:-}}"
-    if [ -n "${INPUT_CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-      export CLOUDFLARE_ACCOUNT_ID="${INPUT_CLOUDFLARE_ACCOUNT_ID}"
-    fi
+    export_cloudflare
     if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
       echo "::error::a real deploy needs a Cloudflare token: set cloudflare-api-token, or CLOUDFLARE_API_TOKEN in env (only a dry run can go without it)"
       exit 1
@@ -200,9 +222,57 @@ case "$phase" in
     status=0
     bynk test "${args[@]}" || status=$?
     if [ "$status" -ne 0 ]; then
-      echo "::error::the smoke test of \`${target}\` failed (exit ${status}); the deploy stays in place — see the log above"
+      if [ "${INPUT_REVERT_ON_SMOKE_FAILURE:-false}" = "true" ]; then
+        echo "::error::the smoke test of \`${target}\` failed (exit ${status}); reverting — see the log above"
+      else
+        echo "::error::the smoke test of \`${target}\` failed (exit ${status}); the deploy stays in place — see the log above"
+      fi
       exit "$status"
     fi
+    ;;
+
+  revert)
+    # After a failed smoke. The job fails whatever happens here: a reverted
+    # deploy is still a failed one, and a refused revert leaves the release in
+    # place. `bynk revert` runs its own safety checks and refuses rather than
+    # roll back unsafely; that refusal is reported, not worked around.
+    export_cloudflare
+    if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+      echo "::error::revert needs a Cloudflare token: set cloudflare-api-token, or CLOUDFLARE_API_TOKEN in env"
+      set_output reverted false
+      set_output revert-refused-reason "no Cloudflare token"
+      exit 1
+    fi
+    args=()
+    if [ -n "${INPUT_ENVIRONMENT:-}" ]; then
+      args+=(--env "${INPUT_ENVIRONMENT}")
+    fi
+    if [ -n "${INPUT_CONTEXT:-}" ]; then
+      args+=(--context "${INPUT_CONTEXT}")
+    fi
+    out="$(mktemp "${RUNNER_TEMP:-/tmp}/bynk-revert.XXXXXX")"
+    echo "::group::bynk revert --yes ${args[*]}"
+    status=0
+    # tee streams the log as it happens, so a cancelled rollback still shows
+    # how far it got, and keeps the file the refusal reason is read from.
+    bynk revert --yes ${args[@]+"${args[@]}"} 2>&1 | tee "$out" || status="${PIPESTATUS[0]}"
+    echo "::endgroup::"
+    if [ "$status" -eq 0 ]; then
+      rm -f "$out"
+      set_output reverted true
+      set_output revert-refused-reason ""
+      echo "::warning::the smoke test failed and the deploy was reverted. The lock steps below record what is live now; the smoke's own writes, if any, are not undone."
+      exit 0
+    fi
+    # The last non-empty line, with any leading `::` defanged so the refusal
+    # text can't be read as a workflow command.
+    reason="$(grep -v '^[[:space:]]*$' "$out" | tail -n 1 | sed -e 's/^[[:space:]]*//' -e 's/^:*//' || true)"
+    rm -f "$out"
+    : "${reason:=bynk revert exited ${status} without a message}"
+    set_output reverted false
+    set_output revert-refused-reason "$reason"
+    echo "::error::the revert of \`${INPUT_ENVIRONMENT:-the deploy}\` was refused or failed (exit ${status}): ${reason}. The release stays live."
+    exit "$status"
     ;;
 
   lock)
